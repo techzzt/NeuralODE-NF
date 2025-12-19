@@ -50,3 +50,50 @@
 - **사용법**: val에서 평균/P95 추적, train 대비 분포 안정성(드리프트 감지)까지 같이 보고
 
 ---
+
+간단한 버전
+
+### 추천 1순위: **TSC (Time‑Step Consistency)**
+**아이디어**: 같은 입력에 대해 ODE를 **“촘촘한 time grid”**와 **“성긴 time grid”**로 각각 돌렸을 때, 최종 점수(또는 잠재 궤적)가 크게 달라지면 **동역학이 불안정/비정상**일 가능성이 큼.
+
+- **정의(간단 버전)**  
+  - `score_dense = anomaly_score(x, t_dense)`  
+  - `score_sparse = anomaly_score(x, t_sparse)`  
+  - **TSC = mean(|score_dense - score_sparse|)** (또는 P95)
+- **장점**
+  - 라벨 없어도 쓸 수 있음(“validation 품질 체크”용)
+  - 지금 코드 구조에서 **`time_steps = torch.linspace(...)`만 바꾸면 바로 계산** 가능
+  - solver/ODE 특성을 직접 활용(ODE 모델이 “연속시간 일관성”을 가져야 한다는 가정)
+
+---
+
+### 추천 2순위: **SRE (Score Rank Stability)**
+**아이디어**: “이상 top‑k”는 보통 **여러 운영/튜닝 상황에서도 같은 위치가 튀는지**가 중요함. time grid(또는 dropout/noise on/off)에 따라 **Top‑K 순위가 크게 바뀌면** 불안정.
+
+- **정의(간단 버전)**  
+  - 두 설정 A/B에서 `topk_indices_A`, `topk_indices_B`를 뽑아서  
+  - **SRE = 1 − Jaccard(topK_A, topK_B)** (0이면 완전 안정, 1이면 완전 불안정)
+- **장점**
+  - 이미 코드에 **Top‑K 계산 흐름이 있음**(시각화/summary에서 topk)
+  - 라벨 없이도 “모델이 뭐를 이상으로 보는지”가 일관적인지 평가 가능
+  - 복잡한 수치해석/야코비안 같은 거 필요 없음
+
+---
+
+### 추천 3순위(조금만 더 추가): **CRE (Cycle/Reverse Consistency Error)**
+모델이 forward/backward 점수(노트북에 `backward_scores` 인자 존재)를 이미 염두에 둔 구조라면,  
+**forward score와 backward score의 차이(또는 correlation)**만으로도 “동역학 일관성”을 지표화할 수 있어요.
+
+- **정의 예시**
+  - **CRE = mean(|score_fwd − score_bwd|)**  
+  - 또는 **1 − corr(score_fwd, score_bwd)**
+- **장점**
+  - “양방향” 특성을 쓰는 ODE/flow 계열에서 설득력 좋음
+  - 구현은 비교적 단순(이미 계산 가능하면 더 쉬움)
+
+---
+
+### 지금 코드 기준 “가장 실용적인 조합”
+- **학습 중 체크포인트 선택/모니터링**: **TSC**
+- **운영에서 이상 후보의 신뢰도(일관성)**: **SRE**
+- (가능하면) **양방향 일관성**: **CRE**
